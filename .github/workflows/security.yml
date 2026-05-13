@@ -1,0 +1,55 @@
+name: Security
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    name: Audit & lockfile guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: npm audit (high+ severity)
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: lockfile-lint (registry must be npm)
+        run: npx --yes lockfile-lint@4.14.0 --path package-lock.json --type npm --validate-https --allowed-hosts npm
+
+      - name: Block unauthorized .npmrc registries
+        shell: bash
+        run: |
+          set -e
+          if [ -f .npmrc ] && grep -E '^\s*(registry|@.*:registry)' .npmrc | grep -vE 'registry\.npmjs\.org|registry\.yarnpkg\.com'; then
+            echo "Unauthorized registry in .npmrc"; cat .npmrc; exit 1
+          fi
+          echo ".npmrc clean."
+
+      - name: Forbid known Shai-Hulud worm filenames
+        shell: bash
+        run: |
+          set -e
+          HITS=$(find . -path '*/node_modules' -prune -o \
+            \( -name 'processor.sh' -o -name 'migrate-repos.sh' \) -print | head)
+          if [ -n "$HITS" ]; then
+            echo "Worm IOC filenames present:"; echo "$HITS"; exit 1
+          fi
+          echo "No worm IOC files in repo."
